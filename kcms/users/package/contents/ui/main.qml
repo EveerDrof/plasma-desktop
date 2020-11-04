@@ -74,6 +74,7 @@ KCM.ScrollViewKCM {
 
                     Kirigami.Avatar {
                         source: model.decoration
+                        cache: false // user picture path doesn't change after updating
                         name: model.display
                         anchors {
                             fill: parent
