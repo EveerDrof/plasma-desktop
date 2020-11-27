@@ -29,7 +29,6 @@
 #include <KPluginSelector>
 #include <KNS3/Button>
 #include <KActivities/Info>
-#include <KActivities/Consumer>
 
 #include <QApplication>
 #include <QDBusMessage>
@@ -51,6 +50,7 @@ K_PLUGIN_FACTORY(SearchConfigModuleFactory, registerPlugin<SearchConfigModule>()
 SearchConfigModule::SearchConfigModule(QWidget* parent, const QVariantList& args)
     : KCModule(parent, args)
     , m_config("krunnerrc")
+    , m_consumer(new KActivities::Consumer(this))
 {
     KAboutData* about = new KAboutData(QStringLiteral("kcm_search"), i18nc("kcm name for About dialog", "Configure Search Bar"),
                                        QStringLiteral("0.1"), QString(), KAboutLicense::LGPL);
@@ -62,7 +62,6 @@ SearchConfigModule::SearchConfigModule(QWidget* parent, const QVariantList& args
         m_pluginID = args.at(0).toString();
     }
 
-    new KActivities::Consumer(this);
     QVBoxLayout* layout = new QVBoxLayout(this);
 
     QHBoxLayout *headerLayout = new QHBoxLayout(this);
@@ -197,6 +196,24 @@ void SearchConfigModule::save()
     config->group("General").writeEntry("RetainPriorSearch", m_retainPriorSearch->isChecked(), KConfig::Notify);
     config->group("General").writeEntry("HistoryEnabled", m_enableHistory->isChecked(), KConfig::Notify);
     config->group("General").writeEntry("ActivityAware", m_activityAware->isChecked(), KConfig::Notify);
+
+    // Combine & write history
+    if (!m_activityAware->isChecked()) {
+        KConfigGroup historyGrp = m_config.group("PlasmaRunnerManager").group("History");
+        // The old config gets migrated to the activity specific keys, so the all key does not exist by default
+        if (!historyGrp.hasKey("all")) {
+            QStringList activities = m_consumer->activities();
+            activities.removeOne(m_consumer->currentActivity());
+            QStringList newHistory = historyGrp.readEntry(m_consumer->currentActivity(), QStringList());
+            for (const QString &activity : qAsConst(activities)) {
+                newHistory.append(historyGrp.readEntry(activity, QStringList()));
+            }
+            newHistory.removeDuplicates();
+            historyGrp.writeEntry("all", newHistory, KConfig::Notify);
+            historyGrp.sync();
+        }
+    }
+
     m_pluginSelector->save();
 
     QDBusMessage message = QDBusMessage::createSignal(QStringLiteral("/krunnerrc"),
@@ -221,13 +238,16 @@ void SearchConfigModule::defaults()
 void SearchConfigModule::configureClearHistoryButton()
 {
     KConfigGroup historyGroup = m_config.group("PlasmaRunnerManager").group("History");
-    const QStringList keys = historyGroup.keyList();
-    if (m_activityAware->isChecked() && keys.length() > 1) {
+    const QStringList activities = m_consumer->activities();
+    const QStringList historyKeys = historyGroup.keyList();
+    m_clearHistoryButton->setEnabled(true); // We always want to show the dropdown
+    if (m_activityAware->isChecked() && activities.length() > 1) {
         auto *installMenu = new QMenu(m_clearHistoryButton);
         QAction *all = installMenu->addAction(m_clearHistoryButton->icon(),
                 i18nc("delete history for all activities", "For all activities"));
+        installMenu->setEnabled(!historyKeys.isEmpty());
         connect(all, &QAction::triggered, this, &SearchConfigModule::deleteAllHistory);
-        for (const auto &key : keys) {
+        for (const auto &key : activities) {
             KActivities::Info info(key);
             QIcon icon;
             const QString iconStr = info.icon();
@@ -240,6 +260,7 @@ void SearchConfigModule::configureClearHistoryButton()
             }
             QAction *singleActivity = installMenu->addAction(icon,
                     i18nc("delete history for this activity", "For activity \"%1\"", info.name()));
+            singleActivity->setEnabled(historyKeys.contains(key)); // Otherwise there would be nothing to delete
             connect(singleActivity, &QAction::triggered, this, [this, key](){ deleteHistoryGroup(key); });
             installMenu->addAction(singleActivity);
             m_clearHistoryButton->setText("Clear History...");
@@ -248,6 +269,7 @@ void SearchConfigModule::configureClearHistoryButton()
     } else {
         m_clearHistoryButton->setText("Clear History");
         m_clearHistoryButton->setMenu(nullptr);
+        m_clearHistoryButton->setEnabled(!historyKeys.isEmpty());
     }
 }
 
@@ -256,6 +278,7 @@ void SearchConfigModule::deleteHistoryGroup(const QString &key)
     KConfigGroup historyGroup = m_config.group("PlasmaRunnerManager").group("History");
     historyGroup.deleteEntry(key, KConfig::Notify);
     historyGroup.sync();
+    configureClearHistoryButton();
 }
 
 void SearchConfigModule::deleteAllHistory()
@@ -263,7 +286,7 @@ void SearchConfigModule::deleteAllHistory()
     KConfigGroup historyGroup = m_config.group("PlasmaRunnerManager").group("History");
     historyGroup.deleteGroup(KConfig::Notify);
     historyGroup.sync();
-    historyGroup.sync();
+    configureClearHistoryButton();
 }
 
 #include "kcm.moc"

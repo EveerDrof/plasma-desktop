@@ -26,6 +26,7 @@
 #include <QCheckBox>
 #include <QPushButton>
 #include <QtWidgets/QToolButton>
+#include <KActivities/Consumer>
 
 
 class KPluginSelector;
@@ -60,6 +61,7 @@ private:
     QCheckBox *m_activityAware;
     QToolButton *m_clearHistoryButton;
     QCheckBox *m_enableHistory;
+    KActivities::Consumer *m_consumer;
 };
 
 #endif
